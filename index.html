@@ -1,0 +1,330 @@
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DIARRA CONNECT</title>
+<script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;background:#071b2b;color:white;
+ font-family:Arial,sans-serif;padding:20px;
+}
+header{text-align:center;padding:20px}
+.logo{font-size:30px;font-weight:bold;color:#21d4a0}
+.card{
+ max-width:440px;margin:15px auto;
+ padding:22px;background:#102d42;
+ border-radius:20px;
+}
+input{
+ width:100%;padding:15px;margin:12px 0;
+ border:0;border-radius:10px;font-size:16px;
+}
+button{
+ width:100%;padding:15px;margin:7px 0;
+ border:0;border-radius:12px;
+ font-size:16px;font-weight:bold;
+}
+.green{background:#19c995;color:#06251c}
+.blue{background:#247bc0;color:white}
+.red{background:#e64c4c;color:white}
+.gray{background:#344c5c;color:white}
+#status{
+ background:#071b2b;padding:13px;
+ border-radius:10px;text-align:center;
+}
+.id{color:#21d4a0;font-size:23px;
+ font-weight:bold;overflow-wrap:anywhere}
+.hidden{display:none}
+small{color:#bdd0dc}
+</style>
+</head>
+<body>
+
+<header>
+ <div class="logo">DIARRA CONNECT</div>
+ <p>WIFI CALL GRATUIT</p>
+</header>
+
+<div class="card">
+ <h2>Mon compte</h2>
+ <p>Mon identifiant personnel :</p>
+ <div class="id" id="myID">Connexion...</div>
+ <button class="blue" onclick="copyID()">
+ Copier mon identifiant
+ </button>
+ <p id="status">Connexion au serveur...</p>
+</div>
+
+<div class="card">
+ <h2>Appeler un ami</h2>
+ <input id="friendID"
+ placeholder="Entre l'identifiant de ton ami">
+ <button class="green" onclick="startCall()">
+ 📞 APPELER
+ </button>
+ <button class="red" onclick="hangUp()">
+ RACCROCHER
+ </button>
+ <button class="blue" onclick="toggleMic()">
+ 🎙️ Activer / couper le micro
+ </button>
+ <button class="gray" onclick="toggleSpeaker()">
+ 🔊 Activer / couper le son
+ </button>
+</div>
+
+<div class="card hidden" id="incoming">
+ <h2>📲 Appel entrant !</h2>
+ <p>Quelqu'un t'appelle.</p>
+ <button class="green" onclick="answerCall()">
+ ACCEPTER L'APPEL
+ </button>
+ <button class="red" onclick="rejectCall()">
+ REFUSER
+ </button>
+</div>
+
+<audio id="remoteAudio" autoplay playsinline></audio>
+
+<script>
+const statusBox=document.getElementById("status");
+const idBox=document.getElementById("myID");
+const incomingBox=document.getElementById("incoming");
+const remoteAudio=document.getElementById("remoteAudio");
+
+let peer=null;
+let currentCall=null;
+let pendingCall=null;
+let localStream=null;
+let speakerOn=true;
+
+function newID(){
+ return "DC"+Math.random().toString(36)
+ .substring(2,12).toUpperCase();
+}
+
+let myID=localStorage.getItem("diarra_connect_id");
+
+if(!myID){
+ myID=newID();
+ localStorage.setItem("diarra_connect_id",myID);
+}
+
+idBox.textContent=myID;
+
+function setStatus(message){
+ statusBox.textContent=message;
+}
+
+function connect(){
+ peer=new Peer(myID,{
+  config:{
+   iceServers:[
+    {urls:"stun:stun.l.google.com:19302"},
+    {urls:"stun:stun1.l.google.com:19302"}
+   ]
+  },
+  debug:1
+ });
+
+ peer.on("open",function(id){
+  idBox.textContent=id;
+  setStatus("Connecté. Prêt à appeler.");
+ });
+
+ peer.on("call",function(call){
+  if(currentCall || pendingCall){
+   call.close();
+   return;
+  }
+  pendingCall=call;
+  incomingBox.classList.remove("hidden");
+  setStatus("Appel entrant ! Accepte pour parler.");
+ });
+
+ peer.on("error",function(error){
+  console.error(error);
+  if(error.type==="unavailable-id"){
+   setStatus("Identifiant déjà utilisé. Recharge la page.");
+  }else if(error.type==="peer-unavailable"){
+   setStatus("Utilisateur introuvable ou hors ligne.");
+  }else{
+   setStatus("Erreur : "+error.type);
+  }
+ });
+
+ peer.on("disconnected",function(){
+  setStatus("Connexion perdue. Reconnexion...");
+  peer.reconnect();
+ });
+}
+
+async function getMicrophone(){
+ if(!navigator.mediaDevices ||
+    !navigator.mediaDevices.getUserMedia){
+  throw new Error("Microphone indisponible. Ouvre le site en HTTPS.");
+ }
+ return await navigator.mediaDevices.getUserMedia({
+  audio:{
+   echoCancellation:true,
+   noiseSuppression:true,
+   autoGainControl:true
+  },
+  video:false
+ });
+}
+
+async function startCall(){
+ const friend=document.getElementById("friendID")
+ .value.trim();
+
+ if(!peer || !peer.open){
+  alert("Attends la connexion au serveur.");
+  return;
+ }
+
+ if(!friend){
+  alert("Entre l'identifiant de ton ami.");
+  return;
+ }
+
+ if(friend===myID){
+  alert("Tu ne peux pas t'appeler toi-même.");
+  return;
+ }
+
+ try{
+  setStatus("Demande d'accès au microphone...");
+  localStream=await getMicrophone();
+
+  setStatus("Appel en cours...");
+
+  currentCall=peer.call(friend,localStream);
+
+  if(!currentCall){
+   throw new Error("Impossible de lancer l'appel.");
+  }
+
+  setupCall(currentCall);
+
+ }catch(error){
+  console.error(error);
+  setStatus("Erreur : "+error.message);
+  stopMicrophone();
+ }
+}
+
+async function answerCall(){
+ if(!pendingCall)return;
+
+ try{
+  localStream=await getMicrophone();
+  currentCall=pendingCall;
+  pendingCall=null;
+  incomingBox.classList.add("hidden");
+
+  currentCall.answer(localStream);
+  setupCall(currentCall);
+
+  setStatus("Connexion à ton correspondant...");
+ }catch(error){
+  console.error(error);
+  setStatus("Impossible d'accéder au microphone.");
+ }
+}
+
+function setupCall(call){
+ call.on("stream",function(remoteStream){
+  remoteAudio.srcObject=remoteStream;
+  remoteAudio.muted=!speakerOn;
+  remoteAudio.play().catch(function(){
+   setStatus("Appuie sur l'écran pour activer le son.");
+  });
+  setStatus("Appel connecté ! Vous pouvez parler.");
+ });
+
+ call.on("close",function(){
+  finishCall();
+ });
+
+ call.on("error",function(error){
+  console.error(error);
+  setStatus("Erreur pendant l'appel.");
+  finishCall();
+ });
+}
+
+function rejectCall(){
+ if(pendingCall){
+  pendingCall.close();
+  pendingCall=null;
+ }
+ incomingBox.classList.add("hidden");
+ setStatus("Appel refusé.");
+}
+
+function stopMicrophone(){
+ if(localStream){
+  localStream.getTracks().forEach(track=>track.stop());
+  localStream=null;
+ }
+}
+
+function finishCall(){
+ if(currentCall){
+  const oldCall=currentCall;
+  currentCall=null;
+  oldCall.close();
+ }
+ stopMicrophone();
+ remoteAudio.srcObject=null;
+ setStatus("Appel terminé.");
+ incomingBox.classList.add("hidden");
+}
+
+function hangUp(){
+ if(pendingCall){
+  pendingCall.close();
+  pendingCall=null;
+ }
+ finishCall();
+}
+
+function toggleMic(){
+ if(!localStream){
+  alert("Aucun appel actif.");
+  return;
+ }
+ const track=localStream.getAudioTracks()[0];
+ if(track){
+  track.enabled=!track.enabled;
+  alert(track.enabled?"Micro activé":"Micro coupé");
+ }
+}
+
+function toggleSpeaker(){
+ speakerOn=!speakerOn;
+ remoteAudio.muted=!speakerOn;
+ alert(speakerOn?"Son activé":"Son coupé");
+}
+
+function copyID(){
+ if(navigator.clipboard){
+  navigator.clipboard.writeText(myID)
+  .then(()=>alert("Identifiant copié !"))
+  .catch(()=>alert("Copie impossible."));
+ }else{
+  alert("Identifiant : "+myID);
+ }
+}
+
+connect();
+</script>
+
+</body>
+  </html>
+  

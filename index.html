@@ -3,328 +3,109 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DIARRA CONNECT</title>
-<script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
-*{box-sizing:border-box}
-body{
- margin:0;background:#071b2b;color:white;
- font-family:Arial,sans-serif;padding:20px;
-}
+body{margin:0;background:#071b2b;color:white;font-family:Arial;padding:10px}
 header{text-align:center;padding:20px}
-.logo{font-size:30px;font-weight:bold;color:#21d4a0}
-.card{
- max-width:440px;margin:15px auto;
- padding:22px;background:#102d42;
- border-radius:20px;
-}
-input{
- width:100%;padding:15px;margin:12px 0;
- border:0;border-radius:10px;font-size:16px;
-}
-button{
- width:100%;padding:15px;margin:7px 0;
- border:0;border-radius:12px;
- font-size:16px;font-weight:bold;
-}
-.green{background:#19c995;color:#06251c}
-.blue{background:#247bc0;color:white}
-.red{background:#e64c4c;color:white}
-.gray{background:#344c5c;color:white}
-#status{
- background:#071b2b;padding:13px;
- border-radius:10px;text-align:center;
-}
-.id{color:#21d4a0;font-size:23px;
- font-weight:bold;overflow-wrap:anywhere}
-.hidden{display:none}
-small{color:#bdd0dc}
+.logo{font-size:28px;font-weight:bold;color:#00ff88}
+.card{background:#0e2a44;padding:20px;border-radius:15px;margin:15px 0}
+input,button{width:100%;padding:15px;margin:8px 0;border-radius:10px;border:none;font-size:16px}
+button{background:#00ff88;color:#000;font-weight:bold}
+button.search{background:#0088ff;color:white}
+#logs{background:#000;color:#0f0;padding:10px;height:100px;overflow:auto;border-radius:10px;font-size:12px}
+.result{background:#123456;padding:10px;margin:5px 0;border-radius:8px}
 </style>
 </head>
 <body>
-
 <header>
- <div class="logo">DIARRA CONNECT</div>
- <p>WIFI CALL GRATUIT</p>
+<div class="logo">📞 DIARRA CONNECT</div>
+<p>Base: diarra-connect</p>
+<p>Votre ID: <span id="myId">Connexion...</span></p>
 </header>
 
 <div class="card">
- <h2>Mon compte</h2>
- <p>Mon identifiant personnel :</p>
- <div class="id" id="myID">Connexion...</div>
- <button class="blue" onclick="copyID()">
- Copier mon identifiant
- </button>
- <p id="status">Connexion au serveur...</p>
+<h3>📞 Passer un appel</h3>
+<input id="nom" placeholder="Nom de l'appelant">
+<input id="numeroAppel" placeholder="ID ou Numéro à appeler">
+<button onclick="passerAppel()">📞 APPELER</button>
+<button onclick="repondreAppel()" id="btnRepondre" style="display:none;background:orange">📥 REPONDRE</button>
 </div>
 
 <div class="card">
- <h2>Appeler un ami</h2>
- <input id="friendID"
- placeholder="Entre l'identifiant de ton ami">
- <button class="green" onclick="startCall()">
- 📞 APPELER
- </button>
- <button class="red" onclick="hangUp()">
- RACCROCHER
- </button>
- <button class="blue" onclick="toggleMic()">
- 🎙️ Activer / couper le micro
- </button>
- <button class="gray" onclick="toggleSpeaker()">
- 🔊 Activer / couper le son
- </button>
+<h3>🔍 Rechercher dans la base</h3>
+<input id="searchInput" placeholder="Tape nom ou numéro à chercher">
+<button class="search" onclick="chercherAppels()">🔍 RECHERCHER</button>
+<button onclick="voirTous()" style="background:#555;color:white">Voir tous les appels</button>
+<div id="resultats"></div>
 </div>
 
-<div class="card hidden" id="incoming">
- <h2>📲 Appel entrant !</h2>
- <p>Quelqu'un t'appelle.</p>
- <button class="green" onclick="answerCall()">
- ACCEPTER L'APPEL
- </button>
- <button class="red" onclick="rejectCall()">
- REFUSER
- </button>
+<div class="card">
+<h3>Journal</h3>
+<div id="logs">Prêt...</div>
 </div>
-
-<audio id="remoteAudio" autoplay playsinline></audio>
+<audio id="remoteAudio" autoplay></audio>
 
 <script>
-const statusBox=document.getElementById("status");
-const idBox=document.getElementById("myID");
-const incomingBox=document.getElementById("incoming");
-const remoteAudio=document.getElementById("remoteAudio");
-
-let peer=null;
-let currentCall=null;
-let pendingCall=null;
-let localStream=null;
-let speakerOn=true;
-
-function newID(){
- return "DC"+Math.random().toString(36)
- .substring(2,12).toUpperCase();
+const SUPABASE_URL="https://nwmpmraheimpakvaczix.supabase.co";
+const SUPABASE_KEY="sb_publishable_dk__FiRU-cyZ8Z9jdTi2rQ_n_XTz6ix";
+const supa=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+function log(m){let d=document.getElementById('logs'); d.innerHTML+=new Date().toLocaleTimeString()+" - "+m+"<br>";}
+const peer=new Peer();
+let curCall=null;
+peer.on('open',id=>{document.getElementById('myId').innerText=id; log("Connecté: "+id);});
+peer.on('call',call=>{
+  curCall=call;
+  document.getElementById('btnRepondre').style.display='block';
+  log("Appel entrant: "+call.peer);
+  enregistrerAppel("Entrant",call.peer);
+});
+async function enregistrerAppel(nom,numero){
+  log("Enregistrement "+numero+"...");
+  const {error}=await supa.from('appels').insert([{nom:nom,numero:numero}]);
+  if(error) log("Erreur DB: "+error.message);
+  else log("✅ ENREGISTRE: "+numero);
 }
-
-let myID=localStorage.getItem("diarra_connect_id");
-
-if(!myID){
- myID=newID();
- localStorage.setItem("diarra_connect_id",myID);
+async function passerAppel(){
+  let num=document.getElementById('numeroAppel').value;
+  let nom=document.getElementById('nom').value||"Client";
+  if(!num){alert("Entrez numéro");return;}
+  await enregistrerAppel(nom,num);
+  try{
+    let stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    let call=peer.call(num,stream);
+    call.on('stream',s=>{document.getElementById('remoteAudio').srcObject=s; log("En ligne avec "+num);});
+  }catch(e){log("Erreur micro: "+e.message);}
 }
-
-idBox.textContent=myID;
-
-function setStatus(message){
- statusBox.textContent=message;
+async function repondreAppel(){
+  let stream=await navigator.mediaDevices.getUserMedia({audio:true});
+  curCall.answer(stream);
+  curCall.on('stream',s=>{document.getElementById('remoteAudio').srcObject=s; log("Appel répondu");});
+  document.getElementById('btnRepondre').style.display='none';
 }
-
-function connect(){
- peer=new Peer(myID,{
-  config:{
-   iceServers:[
-    {urls:"stun:stun.l.google.com:19302"},
-    {urls:"stun:stun1.l.google.com:19302"}
-   ]
-  },
-  debug:1
- });
-
- peer.on("open",function(id){
-  idBox.textContent=id;
-  setStatus("Connecté. Prêt à appeler.");
- });
-
- peer.on("call",function(call){
-  if(currentCall || pendingCall){
-   call.close();
-   return;
-  }
-  pendingCall=call;
-  incomingBox.classList.remove("hidden");
-  setStatus("Appel entrant ! Accepte pour parler.");
- });
-
- peer.on("error",function(error){
-  console.error(error);
-  if(error.type==="unavailable-id"){
-   setStatus("Identifiant déjà utilisé. Recharge la page.");
-  }else if(error.type==="peer-unavailable"){
-   setStatus("Utilisateur introuvable ou hors ligne.");
-  }else{
-   setStatus("Erreur : "+error.type);
-  }
- });
-
- peer.on("disconnected",function(){
-  setStatus("Connexion perdue. Reconnexion...");
-  peer.reconnect();
- });
+async function chercherAppels(){
+  let terme=document.getElementById('searchInput').value;
+  if(!terme){alert("Tape quelque chose");return;}
+  log("Recherche: "+terme);
+  let {data,error}=await supa.from('appels').select('*').or(`nom.ilike.%${terme}%,numero.ilike.%${terme}%`).order('created_at',{ascending:false});
+  afficherResultats(data,error);
 }
-
-async function getMicrophone(){
- if(!navigator.mediaDevices ||
-    !navigator.mediaDevices.getUserMedia){
-  throw new Error("Microphone indisponible. Ouvre le site en HTTPS.");
- }
- return await navigator.mediaDevices.getUserMedia({
-  audio:{
-   echoCancellation:true,
-   noiseSuppression:true,
-   autoGainControl:true
-  },
-  video:false
- });
+async function voirTous(){
+  log("Chargement...");
+  let {data,error}=await supa.from('appels').select('*').order('created_at',{ascending:false}).limit(50);
+  afficherResultats(data,error);
 }
-
-async function startCall(){
- const friend=document.getElementById("friendID")
- .value.trim();
-
- if(!peer || !peer.open){
-  alert("Attends la connexion au serveur.");
-  return;
- }
-
- if(!friend){
-  alert("Entre l'identifiant de ton ami.");
-  return;
- }
-
- if(friend===myID){
-  alert("Tu ne peux pas t'appeler toi-même.");
-  return;
- }
-
- try{
-  setStatus("Demande d'accès au microphone...");
-  localStream=await getMicrophone();
-
-  setStatus("Appel en cours...");
-
-  currentCall=peer.call(friend,localStream);
-
-  if(!currentCall){
-   throw new Error("Impossible de lancer l'appel.");
-  }
-
-  setupCall(currentCall);
-
- }catch(error){
-  console.error(error);
-  setStatus("Erreur : "+error.message);
-  stopMicrophone();
- }
-}
-
-async function answerCall(){
- if(!pendingCall)return;
-
- try{
-  localStream=await getMicrophone();
-  currentCall=pendingCall;
-  pendingCall=null;
-  incomingBox.classList.add("hidden");
-
-  currentCall.answer(localStream);
-  setupCall(currentCall);
-
-  setStatus("Connexion à ton correspondant...");
- }catch(error){
-  console.error(error);
-  setStatus("Impossible d'accéder au microphone.");
- }
-}
-
-function setupCall(call){
- call.on("stream",function(remoteStream){
-  remoteAudio.srcObject=remoteStream;
-  remoteAudio.muted=!speakerOn;
-  remoteAudio.play().catch(function(){
-   setStatus("Appuie sur l'écran pour activer le son.");
+function afficherResultats(data,error){
+  let div=document.getElementById('resultats');
+  if(error){div.innerHTML="<p style='color:red'>Erreur: "+error.message+"</p>"; return;}
+  if(!data||data.length==0){div.innerHTML="<p>Aucun résultat</p>"; return;}
+  div.innerHTML="<h4>"+data.length+" résultats:</h4>";
+  data.forEach(row=>{
+    div.innerHTML+=`<div class='result'>📞 <b>${row.nom}</b> - ${row.numero}<br><small>${new Date(row.created_at).toLocaleString()}</small></div>`;
   });
-  setStatus("Appel connecté ! Vous pouvez parler.");
- });
-
- call.on("close",function(){
-  finishCall();
- });
-
- call.on("error",function(error){
-  console.error(error);
-  setStatus("Erreur pendant l'appel.");
-  finishCall();
- });
 }
-
-function rejectCall(){
- if(pendingCall){
-  pendingCall.close();
-  pendingCall=null;
- }
- incomingBox.classList.add("hidden");
- setStatus("Appel refusé.");
-}
-
-function stopMicrophone(){
- if(localStream){
-  localStream.getTracks().forEach(track=>track.stop());
-  localStream=null;
- }
-}
-
-function finishCall(){
- if(currentCall){
-  const oldCall=currentCall;
-  currentCall=null;
-  oldCall.close();
- }
- stopMicrophone();
- remoteAudio.srcObject=null;
- setStatus("Appel terminé.");
- incomingBox.classList.add("hidden");
-}
-
-function hangUp(){
- if(pendingCall){
-  pendingCall.close();
-  pendingCall=null;
- }
- finishCall();
-}
-
-function toggleMic(){
- if(!localStream){
-  alert("Aucun appel actif.");
-  return;
- }
- const track=localStream.getAudioTracks()[0];
- if(track){
-  track.enabled=!track.enabled;
-  alert(track.enabled?"Micro activé":"Micro coupé");
- }
-}
-
-function toggleSpeaker(){
- speakerOn=!speakerOn;
- remoteAudio.muted=!speakerOn;
- alert(speakerOn?"Son activé":"Son coupé");
-}
-
-function copyID(){
- if(navigator.clipboard){
-  navigator.clipboard.writeText(myID)
-  .then(()=>alert("Identifiant copié !"))
-  .catch(()=>alert("Copie impossible."));
- }else{
-  alert("Identifiant : "+myID);
- }
-}
-
-connect();
 </script>
-
 </body>
-  </html>
-  
+</html>  
